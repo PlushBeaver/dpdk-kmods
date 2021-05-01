@@ -41,6 +41,7 @@
   <ItemGroup>
     <ClInclude Include="virt2phys.h" />
     <ClInclude Include="virt2phys_logic.h" />
+    <ClInclude Include="virt2phys_trace.h" />
   </ItemGroup>
   <ItemGroup>
     <Inf Include="virt2phys.inf" />
@@ -169,9 +170,9 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <WppEnabled>false</WppEnabled>
+      <WppEnabled>true</WppEnabled>
       <WppRecorderEnabled>true</WppRecorderEnabled>
-      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">trace.h</WppScanConfigurationData>
+      <WppScanConfigurationData Condition="'%(ClCompile.ScanConfigurationData)' == ''">virt2phys_trace.h</WppScanConfigurationData>
       <WppKernelMode>true</WppKernelMode>
     </ClCompile>
     <Link>
