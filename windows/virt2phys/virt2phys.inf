@@ -8,6 +8,7 @@ ClassGuid = {78A1C341-4539-11d3-B88D-00C04FAD5171}
 Provider = %ManufacturerName%
 CatalogFile = virt2phys.cat
 DriverVer =
+PnpLockdown = 1
 
 [DestinationDirs]
 DefaultDestDir = 12
