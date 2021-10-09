@@ -24,6 +24,13 @@ struct dev_addr {
     USHORT  func_num;
 };
 
+/** Interrupt vector associated data. */
+typedef struct NETUIO_INTR_CTX {
+    WDFQUEUE queue; /**< Queue of requests for this interrupt. */
+} NETUIO_INTR_CTX;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(NETUIO_INTR_CTX, netuio_intr_ctx_get);
+
 /**
  * The device context performs the same job as a WDM device extension in the driver frameworks
  */
@@ -34,6 +41,9 @@ typedef struct _NETUIO_CONTEXT_DATA
     struct pci_bar          bar[PCI_MAX_BAR];       /**< device BARs */
     struct dev_addr         addr;                   /**< B:D:F details of device */
     struct mem_map_region   dpdk_hw[PCI_MAX_BAR];   /**< mapped region for the device's register space */
+    BOOLEAN                 intr_enabled;           /**< Whether interrupt delivery is enabled. */
+    WDFINTERRUPT            *intr;                  /**< Interrupt objects indexed by vector. */
+    size_t                  intr_n;                 /**< Number of interrupt objects. */
 } NETUIO_CONTEXT_DATA, *PNETUIO_CONTEXT_DATA;
 
 

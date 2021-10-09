@@ -63,6 +63,9 @@ AddReg=Device.HW.Registry
 [Device.HW.Registry]
 ; Ensure that only administrators can access our device object.
 HKR,,Security,,"D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+HKR,Interrupt Management,,0x00000010
+HKR,Interrupt Management\MessageSignaledInterruptProperties,,0x00000010
+HKR,Interrupt Management\MessageSignaledInterruptProperties,MSISupported,0x00010001,1
 
 ;-------------- Service installation
 [netuio_Device.NT.Services]

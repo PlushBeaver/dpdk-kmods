@@ -135,6 +135,109 @@ netuio_create_device(PWDFDEVICE_INIT DeviceInit)
     return status;
 }
 
+static EVT_WDF_INTERRUPT_ISR netuio_intr_service;
+static EVT_WDF_INTERRUPT_WORKITEM netuio_intr_deliver;
+
+_Use_decl_annotations_
+static BOOLEAN
+netuio_intr_service(WDFINTERRUPT intr, ULONG message_id)
+{
+	WDFDEVICE device = WdfInterruptGetDevice(intr);
+	NETUIO_CONTEXT_DATA *ctx = netuio_get_context_data(device);
+	BOOLEAN enabled = ctx->intr_enabled;
+
+	UNREFERENCED_PARAMETER(message_id);
+	if (enabled)
+		WdfInterruptQueueWorkItemForIsr(intr);
+	return enabled;
+}
+
+_Use_decl_annotations_
+static void
+netuio_intr_deliver(WDFINTERRUPT intr, WDFOBJECT device)
+{
+	NETUIO_INTR_CTX *intr_ctx = netuio_intr_ctx_get(intr);
+	WDFREQUEST request;
+	NTSTATUS status;
+
+	UNREFERENCED_PARAMETER(device);
+	PAGED_CODE();
+	status = WdfIoQueueRetrieveNextRequest(intr_ctx->queue, &request);
+	if (NT_SUCCESS(status))
+		WdfRequestComplete(request, STATUS_SUCCESS);
+}
+
+static NTSTATUS
+netuio_intr_alloc(WDFDEVICE device, WDFCMRESLIST raw, WDFCMRESLIST translated)
+{
+	NETUIO_CONTEXT_DATA *ctx;
+	CM_PARTIAL_RESOURCE_DESCRIPTOR *desc;
+	WDFINTERRUPT* intrs;
+	WDF_OBJECT_ATTRIBUTES intr_attr;
+	WDF_INTERRUPT_CONFIG intr_config;
+	WDF_OBJECT_ATTRIBUTES queue_attr;
+	WDF_IO_QUEUE_CONFIG queue_config;
+	ULONG i, resource_n, intr_n = 0, intr_created = 0;
+	NTSTATUS status;
+
+	resource_n = WdfCmResourceListGetCount(translated);
+	for (i = 0; i < resource_n; i++) {
+		desc = WdfCmResourceListGetDescriptor(translated, i);
+		if (desc->Type == CmResourceTypeInterrupt)
+			intr_n++;
+	}
+	if (intr_n == 0)
+		return STATUS_SUCCESS;
+
+	intrs = ExAllocatePoolZero(PagedPool, sizeof(intrs[0]) * intr_n, 'rtni');
+	if (intrs == NULL)
+		return STATUS_INSUFFICIENT_RESOURCES;
+
+	WDF_OBJECT_ATTRIBUTES_INIT(&queue_attr);
+	WDF_IO_QUEUE_CONFIG_INIT(&queue_config, WdfIoQueueDispatchManual);
+	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&intr_attr, NETUIO_INTR_CTX);
+	WDF_INTERRUPT_CONFIG_INIT(&intr_config, netuio_intr_service, NULL);
+	intr_config.EvtInterruptWorkItem = netuio_intr_deliver;
+	for (i = 0; i < resource_n; i++) {
+		NETUIO_INTR_CTX *intr_ctx;
+		WDFINTERRUPT intr;
+		WDFQUEUE queue;
+
+		desc = WdfCmResourceListGetDescriptor(translated, i);
+		if (desc->Type != CmResourceTypeInterrupt)
+			continue;
+
+		intr_config.InterruptRaw = WdfCmResourceListGetDescriptor(raw, i);
+		intr_config.InterruptTranslated = desc;
+		status = WdfInterruptCreate(device, &intr_config, &intr_attr, &intr);
+		if (!NT_SUCCESS(status))
+			goto error;
+
+		queue_attr.ParentObject = intr;
+		status = WdfIoQueueCreate(device, &queue_config, &queue_attr, &queue);
+		if (!NT_SUCCESS(status)) {
+			WdfObjectDelete(intr);
+			goto error;
+		}
+
+		intr_ctx = netuio_intr_ctx_get(intr);
+		intr_ctx->queue = queue;
+		intrs[intr_created] = intr;
+		intr_created++;
+	}
+
+	ctx = netuio_get_context_data(device);
+	ctx->intr = intrs;
+	ctx->intr_n = intr_n;
+	return STATUS_SUCCESS;
+
+error:
+	for (i = 0; i < intr_created; i++)
+		WdfObjectDelete(intrs[i]);
+	ExFreePool(intrs);
+	return status;
+}
+
 _Use_decl_annotations_
 NTSTATUS
 netuio_map_hw_resources(WDFDEVICE Device, WDFCMRESLIST Resources, WDFCMRESLIST ResourcesTranslated)
@@ -208,7 +311,7 @@ netuio_map_hw_resources(WDFDEVICE Device, WDFCMRESLIST Resources, WDFCMRESLIST R
 
             if (descriptor == NULL) {
                 status = STATUS_DEVICE_CONFIGURATION_ERROR;
-                goto end;
+                goto end_of_loop;
             }
         } while ((descriptor->Type != CmResourceTypeMemory) ||
                  !(descriptor->Flags & CM_RESOURCE_MEMORY_BAR));
@@ -237,8 +340,9 @@ netuio_map_hw_resources(WDFDEVICE Device, WDFCMRESLIST Resources, WDFCMRESLIST R
 
         ctx->dpdk_hw[bar_index].mem.size = ctx->bar[bar_index].size;
     } // for bar_index
+end_of_loop:
 
-    status = STATUS_SUCCESS;
+    status = netuio_intr_alloc(Device, Resources, ResourcesTranslated);
 
 end:
     if (status != STATUS_SUCCESS) {
@@ -267,6 +371,7 @@ netuio_free_hw_resources(WDFDEVICE Device)
             MmUnmapIoSpace(ctx->bar[bar_index].virt_addr, ctx->bar[bar_index].size);
         }
     }
+    /* Interrupt objects are released with the device. */
 
     RtlZeroMemory(ctx->dpdk_hw, sizeof(ctx->dpdk_hw));
     RtlZeroMemory(ctx->bar, sizeof(ctx->bar));

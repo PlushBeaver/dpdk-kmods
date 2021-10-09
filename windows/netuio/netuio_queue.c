@@ -245,37 +245,49 @@ end:
     return;
 }
 
-/*
-Routine Description:
-    This event is invoked when the framework receives IRP_MJ_DEVICE_CONTROL request.
-
-Return Value:
-    None
- */
-_Use_decl_annotations_
-VOID
-netuio_evt_IO_device_control(WDFQUEUE Queue, WDFREQUEST Request,
-                             size_t OutputBufferLength, size_t InputBufferLength,
-                             ULONG IoControlCode)
+static void
+netuio_ioctl_intr_control(NETUIO_CONTEXT_DATA *ctx, WDFREQUEST request)
 {
-    UNREFERENCED_PARAMETER(OutputBufferLength);
-    UNREFERENCED_PARAMETER(InputBufferLength);
+	struct netuio_intr_control *in;
+	NTSTATUS status;
 
-    NTSTATUS status = STATUS_SUCCESS;
-    PVOID    input_buf = NULL, output_buf = NULL;
-    size_t   input_buf_size, output_buf_size;
-    size_t  bytes_returned = 0;
+	status = WdfRequestRetrieveInputBuffer(request, sizeof(*in), &in, NULL);
+	if (!NT_SUCCESS(status))
+		goto exit;
+	ctx->intr_enabled = in->enable != 0;
+	status = STATUS_SUCCESS;
+exit:
+	WdfRequestComplete(request, status);
+}
 
-    WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+static void
+netuio_ioctl_intr_query(NETUIO_CONTEXT_DATA *ctx, WDFREQUEST request)
+{
+	struct netuio_intr_query *in;
+	NETUIO_INTR_CTX *intr_ctx;
+	NTSTATUS status;
 
-    PNETUIO_CONTEXT_DATA  ctx;
-    ctx = netuio_get_context_data(device);
+	status = WdfRequestRetrieveInputBuffer(request, sizeof(*in), &in, NULL);
+	if (!NT_SUCCESS(status))
+		goto error;
+	if (in->vector >= ctx->intr_n) {
+		status = STATUS_INVALID_PARAMETER;
+		goto error;
+	}
+	intr_ctx = netuio_intr_ctx_get(ctx->intr[in->vector]);
+	WdfRequestForwardToIoQueue(request, intr_ctx->queue);
+	return;
+error:
+	WdfRequestComplete(request, status);
+}
 
-    if (IoControlCode != IOCTL_NETUIO_PCI_CONFIG_IO)
-    {
-        status = STATUS_INVALID_DEVICE_REQUEST;
-        goto end;
-    }
+static void
+netuio_ioctl_pci_config_io(NETUIO_CONTEXT_DATA *ctx, WDFREQUEST Request)
+{
+    PVOID input_buf = NULL, output_buf = NULL;
+    size_t input_buf_size, output_buf_size;
+    size_t bytes_returned = 0;
+    NTSTATUS status;
 
     // First retrieve the input buffer and see if it matches our device
     status = WdfRequestRetrieveInputBuffer(Request, sizeof(struct dpdk_pci_config_io), &input_buf, &input_buf_size);
@@ -298,7 +310,6 @@ netuio_evt_IO_device_control(WDFQUEUE Queue, WDFREQUEST Request,
     if (!NT_SUCCESS(status)) {
         goto end;
     }
-    ASSERT(output_buf_size == OutputBufferLength);
 
     if (dpdk_pci_io_input->op == PCI_IO_READ) {
         *(UINT64 *)output_buf = 0;
@@ -329,6 +340,37 @@ netuio_evt_IO_device_control(WDFQUEUE Queue, WDFREQUEST Request,
 
 end:
     WdfRequestCompleteWithInformation(Request, status, bytes_returned);
+}
 
-    return;
+/*
+Routine Description:
+    This event is invoked when the framework receives IRP_MJ_DEVICE_CONTROL request.
+
+Return Value:
+    None
+ */
+_Use_decl_annotations_
+VOID
+netuio_evt_IO_device_control(WDFQUEUE Queue, WDFREQUEST Request,
+		size_t OutputBufferLength, size_t InputBufferLength,
+		ULONG IoControlCode)
+{
+	WDFDEVICE device = WdfIoQueueGetDevice(Queue);
+	PNETUIO_CONTEXT_DATA ctx = netuio_get_context_data(device);
+
+	UNREFERENCED_PARAMETER(OutputBufferLength);
+	UNREFERENCED_PARAMETER(InputBufferLength);
+	switch (IoControlCode) {
+	case IOCTL_NETUIO_PCI_CONFIG_IO:
+		netuio_ioctl_pci_config_io(ctx, Request);
+		break;
+	case IOCTL_NETUIO_INTR_CONTROL:
+		netuio_ioctl_intr_control(ctx, Request);
+		break;
+	case IOCTL_NETUIO_INTR_QUERY:
+		netuio_ioctl_intr_query(ctx, Request);
+		break;
+	default:
+		WdfRequestComplete(Request, STATUS_INVALID_DEVICE_REQUEST);
+	}
 }

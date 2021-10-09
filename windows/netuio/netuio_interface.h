@@ -50,6 +50,20 @@ DEFINE_GUID (GUID_DEVINTERFACE_netUIO, 0x08336f60,0x0679,0x4c6c,0x85,0xd2,0xae,0
  */
 #define IOCTL_NETUIO_PCI_CONFIG_IO        CTL_CODE(FILE_DEVICE_NETWORK, 52, METHOD_BUFFERED, FILE_READ_ACCESS | FILE_WRITE_ACCESS)
 
+/**
+ * Control whether interrupts are enabled.
+ * Input: struct netuio_intr_control
+ * Output: N/A
+ */
+#define IOCTL_NETUIO_INTR_CONTROL CTL_CODE(FILE_DEVICE_NETWORK, 53, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+/**
+ * Wait until an interrupt occurs.
+ * Input: struct netuio_intr_query
+ * Output: N/A
+ */
+#define IOCTL_NETUIO_INTR_QUERY CTL_CODE(FILE_DEVICE_NETWORK, 54, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
 struct mem_region {
     UINT64           size;       /**< memory region size */
     LARGE_INTEGER    phys_addr;  /**< physical address of the memory region */
@@ -81,6 +95,14 @@ struct dpdk_pci_config_io
         UINT32			u32;
         UINT64			u64;
     } data; /**< Data to be written, in case of write operations */
+};
+
+struct netuio_intr_control {
+    UINT32 enable; /**< 1 to enable interrupts, 0 to disable */
+};
+
+struct netuio_intr_query {
+    UINT32 vector; /**< Vector of the interrupt to wait for. */
 };
 
 #pragma pack(pop)
